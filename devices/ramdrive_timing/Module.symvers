@@ -1,0 +1,3 @@
+0x2bfaa528	bdbm_dm_get_inf	/home/hoon/fine-grained_bdbm_drv/devices/ramdrive_timing/risa_dev_ramdrive_timing	EXPORT_SYMBOL
+0x6699beaf	bdbm_dm_exit	/home/hoon/fine-grained_bdbm_drv/devices/ramdrive_timing/risa_dev_ramdrive_timing	EXPORT_SYMBOL
+0x1ad490a0	bdbm_dm_init	/home/hoon/fine-grained_bdbm_drv/devices/ramdrive_timing/risa_dev_ramdrive_timing	EXPORT_SYMBOL
