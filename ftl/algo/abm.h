@@ -66,6 +66,8 @@ typedef struct {
 	uint32_t erase_count;
 	uint32_t nr_invalid_subpages;
 	babm_abm_subpage_t* pst;	/* a page status table; used when the FTL requires */
+	babm_abm_subpage_t* sID;	
+	uint32_t* wtime;
 
 	struct list_head list;	/* for list */
 } bdbm_abm_block_t;
@@ -105,6 +107,7 @@ static inline uint64_t bdbm_abm_get_nr_total_blocks (bdbm_abm_info_t* bai) { ret
 
 uint32_t bdbm_abm_load (bdbm_abm_info_t* bai, const char* fn);
 uint32_t bdbm_abm_store (bdbm_abm_info_t* bai, const char* fn);
+void bdbm_page_ipr_display(bdbm_abm_info_t* bai, uint64_t len);
 
 #define bdbm_abm_list_for_each_dirty_block(pos, bai, channel_no, chip_no) \
 	list_for_each (pos, &(bai->list_head_dirty[channel_no][chip_no]))

@@ -82,6 +82,8 @@ typedef struct {
 	uint8_t status; /* BDBM_PFTL_PAGE_STATUS */
 	bdbm_phyaddr_t phyaddr; /* physical location */
 	uint8_t sp_off;
+	uint64_t writtentime;
+	uint8_t  sID;
 } bdbm_page_mapping_entry_t;
 
 typedef struct {
@@ -105,6 +107,11 @@ typedef struct {
 	bdbm_sema_t badblk;
 } bdbm_page_ftl_private_t;
 
+uint32_t display_validity_ID_pages(bdbm_device_params_t* np, uint64_t channel_no, uint64_t chip_no, uint64_t block_no);
+extern uint64_t lifetimesum_sID[4];
+extern uint64_t discarded_ID_cnt[4];
+extern uint64_t longest_lifetime[4];
+extern uint64_t shortest_lifetime[4];
 
 bdbm_page_mapping_entry_t* __bdbm_page_ftl_create_mapping_table (
 	bdbm_device_params_t* np)
@@ -157,7 +164,8 @@ uint32_t __bdbm_page_ftl_get_active_blocks (
 				/*bdbm_msg ("active blk = %p", *bab);*/
 				bab++;
 			} else {
-				bdbm_error ("bdbm_abm_get_free_block_prepare failed");
+				bdbm_error ("bdbm_abm_get_free_block_prepare failed, freeblk: %lld, chan: %lld, chp: %lld", 
+						bai->nr_free_blks, i, j);
 				return 1;
 			}
 		}
@@ -207,9 +215,12 @@ void __bdbm_page_ftl_destroy_active_blocks (
 	bdbm_free (bab);
 }
 
+//tjkim
+bdbm_file_t fp_ID;
+uint64_t fp_ID_pos = 0;
+
 uint32_t bdbm_page_ftl_create (bdbm_drv_info_t* bdi)
 {
-	uint32_t i = 0, j = 0;
 	bdbm_page_ftl_private_t* p = NULL;
 	bdbm_device_params_t* np = BDBM_GET_DEVICE_PARAMS (bdi);
 
@@ -273,6 +284,12 @@ uint32_t bdbm_page_ftl_create (bdbm_drv_info_t* bdi)
 	bdbm_sema_init (&p->gc_hlm_w.done);
 	hlm_reqs_pool_allocate_llm_reqs (p->gc_hlm_w.llm_reqs, p->nr_punits_pages, RP_MEM_PHY);
 
+	//tjkim
+	if((fp_ID = bdbm_fopen("/tmp/ID.dat", O_CREAT | O_WRONLY, 0777)) == 0) {
+		bdbm_error ("bdbm_fopen failed");
+		return 1;
+	}
+
 	return 0;
 }
 
@@ -301,11 +318,14 @@ void bdbm_page_ftl_destroy (bdbm_drv_info_t* bdi)
 	if (p->bai)
 		bdbm_abm_destroy (p->bai);
 	bdbm_free (p);
+	//tjkim
+	bdbm_fclose(fp_ID);
 }
 
+extern uint64_t g_logical_wtime;
 uint32_t bdbm_page_ftl_get_free_ppa (
 	bdbm_drv_info_t* bdi, 
-	int64_t lpa,
+	int64_t streamID,
 	bdbm_phyaddr_t* ppa)
 {
 	bdbm_page_ftl_private_t* p = _ftl_page_ftl.ptr_private;
@@ -364,19 +384,31 @@ uint32_t bdbm_page_ftl_map_lpa_to_ppa (
 	bdbm_page_ftl_private_t* p = _ftl_page_ftl.ptr_private;
 	bdbm_page_mapping_entry_t* me = NULL;
 	int k;
+	int8_t ID;
+
+	//tjkim
+	/*
+	int blk_idx = phyaddr->channel_no * np->nr_blocks_per_channel + 
+		phyaddr->chip_no * np->nr_blocks_per_chip + 
+		phyaddr->block_no;
+	bdbm_abm_block_t* b = &p->bai->blocks[blk_idx];
+	*/
 
 	/* is it a valid logical address */
 	for (k = 0; k < np->nr_subpages_per_page; k++) {
 		if (logaddr->lpa[k] == -1) {
-			/* the correpsonding subpage must be set to invalid for gc */
-			bdbm_abm_invalidate_page (
-				p->bai, 
-				phyaddr->channel_no, 
-				phyaddr->chip_no,
-				phyaddr->block_no,
-				phyaddr->page_no,
-				k
-			);
+			//continue;
+			/* the correpsonding subpage must be set to invalid for gc (since this is partial page write) */
+			if(logaddr->ofs == 0) {
+				bdbm_abm_invalidate_page (
+						p->bai, 
+						phyaddr->channel_no, 
+						phyaddr->chip_no,
+						phyaddr->block_no,
+						phyaddr->page_no,
+						k
+						);
+			}
 			continue;
 		}
 
@@ -389,23 +421,62 @@ uint32_t bdbm_page_ftl_map_lpa_to_ppa (
 		me = &p->ptr_mapping_table[logaddr->lpa[k]];
 		bdbm_bug_on (me == NULL);
 
-		/* update the mapping table */
+		/* update the mapping table for writing same address */
 		if (me->status == PFTL_PAGE_VALID) {
-			bdbm_abm_invalidate_page (
-				p->bai, 
-				me->phyaddr.channel_no, 
-				me->phyaddr.chip_no,
-				me->phyaddr.block_no,
-				me->phyaddr.page_no,
-				me->sp_off
-			);
+			uint64_t lifetime;
+			//bdbm_msg(" update done, %lld %d", logaddr->lpa[k], b->wtime[phyaddr->page_no*np->nr_subpages_per_page+k]);
+			if(logaddr->ofs == 0) {    // skip invalidation for gc req (ofs==wtime), since it will be erased soon
+				bdbm_abm_invalidate_page (
+						p->bai, 
+						me->phyaddr.channel_no, 
+						me->phyaddr.chip_no,
+						me->phyaddr.block_no,
+						me->phyaddr.page_no,
+						me->sp_off
+						);
+
+				bdbm_bug_on(me->writtentime > g_logical_wtime);
+				bdbm_bug_on(me->sID < 0 || me->sID > 4);
+				lifetime = g_logical_wtime - me->writtentime;
+				lifetimesum_sID[me->sID] += lifetime;
+				if(longest_lifetime[me->sID] < lifetime)
+					longest_lifetime[me->sID] = lifetime;
+				if(shortest_lifetime[me->sID] > lifetime)
+					shortest_lifetime[me->sID] = lifetime;
+				//pmu_inc_invalid(bdi);
+
+				discarded_ID_cnt[me->sID]++;
+				me->sID = -1;
+				me->writtentime = -1;
+			}
 		}
+
 		me->status = PFTL_PAGE_VALID;
 		me->phyaddr.channel_no = phyaddr->channel_no;
 		me->phyaddr.chip_no = phyaddr->chip_no;
 		me->phyaddr.block_no = phyaddr->block_no;
 		me->phyaddr.page_no = phyaddr->page_no;
 		me->sp_off = k;
+
+		//tjkim
+		ID = logaddr->streamID;
+
+		if(logaddr->ofs == 0) { // count if it's user request (ofs==0), skip for gc req (ofs==wtime).
+			if(ID != 0) ID -= 10;
+			bdbm_bug_on(ID < 0 || ID > 4);
+			me->sID = ID;
+			me->writtentime = g_logical_wtime++;
+
+			pmu_inc_ID_cnt(bdi, ID); 
+		}
+
+		/*
+		if(ID < 0 || ID >= 4) {bdbm_msg("ERROR: ID: %d, stremID: %d, ofs: %d", ID, logaddr->streamID, logaddr->ofs); return 1;}
+		b->sID[phyaddr->page_no*np->nr_subpages_per_page+k] = ID;
+		//if(logaddr->ofs < 0) {bdbm_msg("ERROR: wtime: %d", logaddr->ofs); return 1;}
+		b->wtime[phyaddr->page_no*np->nr_subpages_per_page+k] = 
+			(logaddr->ofs == 0) ? g_logical_wtime++ : logaddr->ofs;
+		*/
 	}
 
 	return 0;
@@ -464,6 +535,7 @@ uint32_t bdbm_page_ftl_invalidate_lpa (
 	bdbm_page_ftl_private_t* p = _ftl_page_ftl.ptr_private;
 	bdbm_page_mapping_entry_t* me = NULL;
 	uint64_t loop;
+	uint64_t cnt = 0;
 
 	/* check the range of input addresses */
 	if ((lpa + len) > np->nr_subpages_per_ssd) {
@@ -476,6 +548,7 @@ uint32_t bdbm_page_ftl_invalidate_lpa (
 	for (loop = lpa; loop < (lpa + len); loop++) {
 		me = &p->ptr_mapping_table[loop];
 		if (me->status == PFTL_PAGE_VALID) {
+			uint64_t lifetime;
          //   printk("INVALIDATE(%llu)\n", lpa);
 			bdbm_abm_invalidate_page (
 				p->bai, 
@@ -486,8 +559,27 @@ uint32_t bdbm_page_ftl_invalidate_lpa (
 				me->sp_off
 			);
 			me->status = PFTL_PAGE_INVALID;
+
+			bdbm_bug_on(me->writtentime > g_logical_wtime);
+			bdbm_bug_on(me->sID < 0 || me->sID > 4);
+			lifetime = g_logical_wtime - me->writtentime;
+			lifetimesum_sID[me->sID] += lifetime;
+			if(longest_lifetime[me->sID] < lifetime)
+				longest_lifetime[me->sID] = lifetime;
+			if(shortest_lifetime[me->sID] > lifetime)
+				shortest_lifetime[me->sID] = lifetime;
+
+			//pmu_inc_invalid(bdi);
+
+			discarded_ID_cnt[me->sID]++;
+			me->sID = -1;
+			me->writtentime = -1;
+			cnt++;
 		}
 	}
+	//bdbm_msg("TRIM requested: %lld, done: %lld", len, cnt);
+	//tjkim
+	//bdbm_page_ipr_display(p->bai, len);	
 
 	return 0;
 }
@@ -498,7 +590,7 @@ uint8_t bdbm_page_ftl_is_gc_needed (bdbm_drv_info_t* bdi, int64_t lpa)
 	uint64_t nr_total_blks = bdbm_abm_get_nr_total_blocks (p->bai);
 	uint64_t nr_free_blks = bdbm_abm_get_nr_free_blocks (p->bai);
 
-	/* invoke gc when remaining free blocks are less than 1% of total blocks */
+	/* invoke gc when remaining free blocks are less than x% of total blocks */
 	if ((nr_free_blks * 100 / nr_total_blks) <= 2) {
 		return 1;
 	}
@@ -569,6 +661,9 @@ bdbm_abm_block_t* __bdbm_page_ftl_victim_selection_greedy (
 		if (b->nr_invalid_subpages > v->nr_invalid_subpages)
 			v = b;
 	}
+
+	//bdbm_msg("victim block: %llu, %llu, %llu, invalid pages: %d", v->channel_no, v->chip_no, v->block_no, v->nr_invalid_subpages);
+	//display_validity_ID_pages(np, v->channel_no, v->chip_no, v->block_no);
 
 	return v;
 }
@@ -751,6 +846,7 @@ erase_blks:
 }
 #endif
 
+
 uint32_t bdbm_page_ftl_do_gc (bdbm_drv_info_t* bdi, int64_t lpa)
 {
 	bdbm_page_ftl_private_t* p = _ftl_page_ftl.ptr_private;
@@ -762,7 +858,6 @@ uint32_t bdbm_page_ftl_do_gc (bdbm_drv_info_t* bdi, int64_t lpa)
 	uint64_t nr_punits = 0;
 	uint64_t i, j, k;
 	bdbm_stopwatch_t sw;
-	int64_t gctime = 0;
 
 	nr_punits = np->nr_channels * np->nr_chips_per_channel;
 
@@ -806,6 +901,15 @@ uint32_t bdbm_page_ftl_do_gc (bdbm_drv_info_t* bdi, int64_t lpa)
                     has_valid = 1;
                     r->logaddr.lpa[k] = -1; /* the subpage contains new data */
                     r->fmain.kp_stt[k] = KP_STT_DATA;
+					//tjkim
+					/*
+					r->sID = b->sID[j*np->nr_subpages_per_page+k];
+					if(b->sID[j*np->nr_subpages_per_page+k] > 3 || b->sID[j*np->nr_subpages_per_page+k] < 0) 
+						bdbm_msg("error on sID: %d, page: %llu, sub: %llu", b->sID[j*np->nr_subpages_per_page+k], j, k);
+					r->wtime = b->wtime[j*np->nr_subpages_per_page+k];
+					if(b->wtime[j*np->nr_subpages_per_page+k] > g_logical_wtime) 
+						bdbm_msg("error on wtime: %d, page: %llu, sub: %llu", b->wtime[j*np->nr_subpages_per_page+k], j, k);
+					*/
                 } else {
                     r->logaddr.lpa[k] = -1;	/* the subpage contains obsolate data */
                     r->fmain.kp_stt[k] = KP_STT_HOLE;
@@ -823,10 +927,11 @@ uint32_t bdbm_page_ftl_do_gc (bdbm_drv_info_t* bdi, int64_t lpa)
                 r->ret = 0;
                 nr_llm_reqs++;
             }
+
         }
+		//tjkim
+		//display_validity_ID_pages(np, b->channel_no, b->chip_no, b->block_no);
     }
-
-
 
     /* wait until Q in llm becomes empty 
      * TODO: it might be possible to further optimize this */
@@ -915,13 +1020,20 @@ uint32_t bdbm_page_ftl_do_gc (bdbm_drv_info_t* bdi, int64_t lpa)
                 r->logaddr.lpa[k] = -1;
             } else {
                 bdbm_bug_on (1);
-            }
+			}
         }
         r->ptr_hlm_req = (void*)hlm_gc_w;
         if (bdbm_page_ftl_get_free_ppa (bdi, 0, &r->phyaddr) != 0) {
             bdbm_error ("bdbm_page_ftl_get_free_ppa failed");
             bdbm_bug_on (1);
         }
+		//tjkim
+		/*
+		r->logaddr.streamID = r->sID;
+		if(r->sID > 3 || r->sID < 0) bdbm_msg("error on r->sID: %d", r->sID);
+		r->logaddr.ofs = r->wtime;
+		*/
+		r->logaddr.ofs = 1;	
         if (bdbm_page_ftl_map_lpa_to_ppa (bdi, &r->logaddr, &r->phyaddr) != 0) {
             bdbm_error ("bdbm_page_ftl_map_lpa_to_ppa failed");
             bdbm_bug_on (1);
@@ -959,6 +1071,9 @@ erase_blks:
         r->ret = 0;
     }
 
+	bdbm_msg("gc - read pages: %lld, written pages: %lld, erased blk: %lld",
+			hlm_gc->nr_llm_reqs, hlm_gc_w->nr_llm_reqs, nr_gc_blks);
+
     /* send erase reqs to llm */
     hlm_gc->req_type = REQTYPE_GC_ERASE;
     hlm_gc->nr_llm_reqs = p->nr_punits;
@@ -982,11 +1097,7 @@ erase_blks:
         bdbm_abm_erase_block (p->bai, b->channel_no, b->chip_no, b->block_no, ret);
     }
 
-    bdbm_msg ("----------------------------------------------");
-    bdbm_msg ("gc-victim: %llu pages, %llu blocks, %llu us", 
-            nr_llm_reqs, nr_gc_blks, bdbm_stopwatch_get_elapsed_time_us (&sw));
-
-
+	pmu_inc_gc(bdi);
 
     return 0;
 }
@@ -1169,6 +1280,7 @@ void __bdbm_page_badblock_scan_eraseblks (
     /* measure gc elapsed time */
 }
 
+/*
 static void __bdbm_page_mark_it_dead (
         bdbm_drv_info_t* bdi,
         uint64_t block_no)
@@ -1190,6 +1302,7 @@ static void __bdbm_page_mark_it_dead (
         }
     }
 }
+*/
 
 uint32_t bdbm_page_badblock_scan (bdbm_drv_info_t* bdi)
 {
@@ -1299,7 +1412,6 @@ uint32_t bdbm_page_badblock_scan (bdbm_drv_info_t* bdi)
 }
 
 uint32_t bdbm_remap(bdbm_drv_info_t* bdi, int64_t o_lpa, int64_t d_lpa, int len){
-    bdbm_device_params_t* np = BDBM_GET_DEVICE_PARAMS (bdi);
     bdbm_page_ftl_private_t* p = _ftl_page_ftl.ptr_private;
     bdbm_page_mapping_entry_t* me = NULL;
     bdbm_phyaddr_t phyaddr;
@@ -1326,5 +1438,64 @@ uint32_t bdbm_remap(bdbm_drv_info_t* bdi, int64_t o_lpa, int64_t d_lpa, int len)
     return 0;
 }
 
+extern uint8_t* message_buffer;
+//uint8_t flag = 0;
+uint32_t display_validity_ID_pages(bdbm_device_params_t* np, uint64_t channel_no, uint64_t chip_no, uint64_t block_no){
+	uint64_t j,k=0,len=0;	
+	bdbm_page_ftl_private_t* p = _ftl_page_ftl.ptr_private;
+	int blk_idx = channel_no * np->nr_blocks_per_channel + 
+		chip_no * np->nr_blocks_per_chip + 
+		block_no;
+	bdbm_abm_block_t* b = &p->bai->blocks[blk_idx];
+	uint32_t valArr[4] = {0};
+	uint32_t inValArr[4] = {0};
+	uint32_t sum = 0;
 
+	//if(flag == 1) return 0;
+	//if(flag == 0) flag = 1;
+	
+	bdbm_bug_on(message_buffer == NULL);
+	len += sprintf(message_buffer+len, "pu %lld:", channel_no*np->nr_chips_per_channel+chip_no);
 
+	//if(i != 0) return 0;
+	for(j = 0; j < np->nr_pages_per_block; j++) {
+		for(k = 0; k < np->nr_subpages_per_page; k++) {
+			int8_t ID;
+			uint64_t offset = j*np->nr_subpages_per_page+k;
+			bdbm_bug_on (offset >= np->nr_subpages_per_block);
+			if(offset >= np->nr_subpages_per_block)
+				bdbm_msg("j: %lld, k: %lld, offset: %lld, nr_subpages_per_block:%lld", j, k, offset, np->nr_subpages_per_block);
+			ID = (int8_t)(b->sID[offset]);
+			/*
+			if(ID != 0) ID -= 10;
+			if(ID < 0 || ID >= 4) {bdbm_msg("ERROR: ID: %d", ID); return 1;}
+			*/
+
+			if(b->pst[offset] == BDBM_ABM_SUBPAGE_INVALID)
+				inValArr[ID]++;
+			else
+				valArr[ID]++;
+			
+			//bdbm_msg("offset: %lld, v: %d, i[%d]: %d, v[%d]: %d", offset, b->pst[offset], ID, inValArr[ID], ID, valArr[ID]);
+			//len += sprintf(message_buffer+len, "%d ", ID);
+		}
+	}
+	//bdbm_msg("%s", message_buffer);
+
+	for(j = 0; j < 4; j++){
+		len += sprintf(message_buffer+len, " %d", inValArr[j]);
+		sum += inValArr[j];
+	}
+	len += sprintf(message_buffer+len, ",");
+	for(j = 0; j < 4; j++){
+		len += sprintf(message_buffer+len, " %d", valArr[j]);
+		sum += valArr[j];
+	}
+
+	//bdbm_msg("block: %llu, %llu, %llu, j:%llu,k:%llu", b->channel_no, b->chip_no, b->block_no, j, k);
+	//len += sprintf(message_buffer+len, "\n");
+
+	//fp_ID_pos += bdbm_fwrite(fp_ID, fp_ID_pos, message_buffer, strlen(message_buffer));
+	if(sum != 0) bdbm_msg("%s", message_buffer);
+	return 0;
+}

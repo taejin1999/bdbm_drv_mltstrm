@@ -66,7 +66,6 @@ robusta_drv-y := \
 	$(FTL)/llm_mq.o \
 	$(FTL)/algo/abm.o \
 	$(FTL)/algo/page_ftl.o \
-	$(FTL)/algo/block_ftl.o \
 	$(FTL)/queue/queue.o \
 	$(FTL)/queue/prior_queue.o \
 	$(FTL)/queue/rd_prior_queue.o \

@@ -44,6 +44,13 @@ THE SOFTWARE.
 #include "pmu.h"
 #include "utime.h"
 
+//tjkim
+extern uint64_t lifetimesum_sID[4];
+extern uint64_t discarded_ID_cnt[4];
+extern uint64_t longest_lifetime[4];
+extern uint64_t shortest_lifetime[4];
+extern uint64_t num_subwrite_req;
+
 #ifdef USE_PMU
 void pmu_create (bdbm_drv_info_t* bdi)
 {
@@ -57,6 +64,7 @@ void pmu_create (bdbm_drv_info_t* bdi)
 	bdbm_stopwatch_start (&bdi->pm.exetime);
 	atomic64_set (&bdi->pm.page_read_cnt, 0);
 	atomic64_set (&bdi->pm.page_write_cnt, 0);
+	atomic64_set (&bdi->pm.page_invalid_cnt, 0);
 	atomic64_set (&bdi->pm.rmw_read_cnt, 0);
 	atomic64_set (&bdi->pm.rmw_write_cnt, 0);
 	atomic64_set (&bdi->pm.gc_cnt, 0);
@@ -95,6 +103,10 @@ void pmu_create (bdbm_drv_info_t* bdi)
         for (i = 0; i < punit; i++) 
             atomic64_set (&bdi->pm.util_w[i], 0);
     }
+
+	for(i = 0; i < 4; i++) {
+		bdi->pm.ID_cnt[i] = 0;
+	}
 }
 
 void pmu_destory (bdbm_drv_info_t* bdi)
@@ -167,6 +179,12 @@ void pmu_inc_write (bdbm_drv_info_t* bdi)
     atomic64_inc (&bdi->pm.page_write_cnt);
 }
 
+void pmu_inc_invalid (bdbm_drv_info_t* bdi) 
+{
+    atomic64_inc (&bdi->pm.page_invalid_cnt);
+}
+
+
 void pmu_inc_rmw_read (bdbm_drv_info_t* bdi) 
 {
     atomic64_inc (&bdi->pm.rmw_read_cnt);
@@ -215,6 +233,10 @@ void pmu_inc_meta_read (bdbm_drv_info_t* bdi)
 void pmu_inc_meta_write (bdbm_drv_info_t* bdi)
 {
     atomic64_inc (&bdi->pm.meta_write_cnt);
+}
+
+void pmu_inc_ID_cnt (bdbm_drv_info_t* bdi, uint64_t ID) {
+    bdi->pm.ID_cnt[ID]++;
 }
 
 /* update the time taken to run sw algorithms */
@@ -428,10 +450,11 @@ void pmu_update_gc_tot (bdbm_drv_info_t* bdi, bdbm_stopwatch_t* sw)
 /* display performance results */
 char format[1024];
 char str[1024];
+extern uint64_t num_invalidated_pages;
 
 void pmu_display (bdbm_drv_info_t* bdi) 
 {
-    uint64_t i, j;
+    uint64_t i, j, sum;
     struct timeval exetime;
     bdbm_device_params_t* np = BDBM_GET_DEVICE_PARAMS(bdi);
 
@@ -455,10 +478,11 @@ void pmu_display (bdbm_drv_info_t* bdi)
             atomic64_read (&bdi->pm.rmw_write_cnt) +
             atomic64_read (&bdi->pm.gc_write_cnt) +
             atomic64_read (&bdi->pm.meta_write_cnt)
-            );
-
+			);
     bdbm_msg ("# of block erase: %ld", 
             atomic64_read (&bdi->pm.gc_erase_cnt));
+    //bdbm_msg ("# of invalidated pages: %lld", num_invalidated_pages);
+
     bdbm_msg ("");
 
     bdbm_msg ("[2] Normal I/Os");
@@ -466,6 +490,27 @@ void pmu_display (bdbm_drv_info_t* bdi)
             atomic64_read (&bdi->pm.page_read_cnt));
     bdbm_msg ("# of page writes: %ld", 
             atomic64_read (&bdi->pm.page_write_cnt));
+	j = 0;
+	j += sprintf(str, "num. in-written IDs:\t" );
+    for (i = 0, sum = 0; i < 4; i++) {
+		sum += bdi->pm.ID_cnt[i];
+		j += sprintf (str+j, "%llu ", bdi->pm.ID_cnt[i]);
+	}
+	j += sprintf (str+j, "sum: %llu ", sum);
+	j += sprintf (str+j, "subwrite req: %llu ", num_subwrite_req);
+	bdbm_msg ("%s", str);
+	bdbm_memset (str, 0x00, sizeof (str));
+
+	j = 0;
+	j += sprintf(str, "num. discarded IDs:\t" );
+    for (i = 0, sum = 0; i < 4; i++) {
+		sum += discarded_ID_cnt[i];
+		j += sprintf (str+j, "%lld ", discarded_ID_cnt[i]);
+	}
+	j += sprintf (str+j, "sum: %llu ", sum);
+	bdbm_msg ("%s", str);
+	bdbm_memset (str, 0x00, sizeof (str));
+
     bdbm_msg ("# of page rmw reads: %ld", 
             atomic64_read (&bdi->pm.rmw_read_cnt));
     bdbm_msg ("# of page rmw writes: %ld", 
@@ -528,6 +573,40 @@ void pmu_display (bdbm_drv_info_t* bdi)
         bdbm_msg ("%s", format);
         bdbm_memset (format, 0x00, sizeof (format));
     }
+    bdbm_msg ("");
+
+    bdbm_msg ("[8] Avg. Lifetime of type");
+	j = 0;
+	j += sprintf(str, "total lifetime:" );
+    for (i = 0; i < 4; i++) {
+		j += sprintf (str+j, "%llu ", lifetimesum_sID[i]);
+	}
+	bdbm_msg ("%s", str);
+	bdbm_memset (str, 0x00, sizeof (str));
+
+	j = 0;
+	j += sprintf(str, "avg. lifetime:" );
+	for (i = 0; i < 4; i++) {
+		j += sprintf (str+j, "%llu ",  (discarded_ID_cnt[i] == 0) ? 0 :  lifetimesum_sID[i]/discarded_ID_cnt[i]);
+	}
+	bdbm_msg ("%s", str);
+	bdbm_memset (str, 0x00, sizeof (str));
+
+	j = 0;
+	j += sprintf(str, "longest lifetime:" );
+    for (i = 0; i < 4; i++) {
+		j += sprintf (str+j, "%llu ", longest_lifetime[i]);
+	}
+	bdbm_msg ("%s", str);
+	bdbm_memset (str, 0x00, sizeof (str));
+
+	j = 0;
+	j += sprintf(str, "shortest lifetime:" );
+    for (i = 0; i < 4; i++) {
+		j += sprintf (str+j, "%lld ", shortest_lifetime[i]);
+	}
+	bdbm_msg ("%s", str);
+	bdbm_memset (str, 0x00, sizeof (str));
 
     bdbm_msg ("-----------------------------------------------");
     bdbm_msg ("-----------------------------------------------");

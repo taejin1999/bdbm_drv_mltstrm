@@ -1,5 +1,3 @@
-sudo umount /media/robusta
+sudo umount /mnt/blueDBM
 sudo rmmod robusta_drv
-sudo rmmod nvme
-sudo rmmod dumbssd
-sudo rmmod risa*
+sudo rmmod risa_dev_ramdrive_timing

@@ -321,11 +321,12 @@ static int __hlm_reqs_pool_create_write_req (
 	bdbm_blkio_req_t* br)
 {
 	int64_t sec_start, sec_end, pg_start, pg_end;
-    int64_t i = 0, j = 0, k = 0, l = 0, m = 0, tmp_size = 0, added_size = 0;
+    int64_t i = 0, j = 0, k = 0;
 	int64_t hole = 0, bvec_cnt = 0, nr_llm_reqs;
 	bdbm_flash_page_main_t* ptr_fm = NULL;
 	bdbm_llm_req_t* ptr_lr = NULL;
-    bdbm_llm_req_t* ptr_lr_prev = NULL;
+    int nr_valid;
+    int add;
 
 	/* expand boundary sectors */
 	sec_start = BDBM_ALIGN_DOWN (br->bi_offset, NR_KSECTORS_IN(pool->map_unit));
@@ -384,6 +385,9 @@ static int __hlm_reqs_pool_create_write_req (
             ptr_lr->req_type = REQTYPE_RMW_READ;
         }
 
+		//tjkim
+		ptr_lr->logaddr.streamID = br->bi_stream;
+
         /* go to the next */
         ptr_lr->ptr_hlm_req = (void*)hr;
         ptr_lr++;
@@ -407,8 +411,8 @@ static int __hlm_reqs_pool_create_write_req (
     }
 */
     ptr_lr--;
-    int nr_valid = 0;
-    int add = 0;
+    nr_valid = 0;
+    add = 0;
 
     for (j = 0; j < pool->io_unit / pool->map_unit; j++) {
         if(ptr_lr->fmain.kp_stt[j] == KP_STT_DATA) nr_valid++;
@@ -553,6 +557,7 @@ void hlm_reqs_pool_relocate_kp (bdbm_llm_req_t* lr, uint64_t new_sp_ofs)
     }
 }
 
+extern uint32_t g_logical_wtime;
 void hlm_reqs_pool_write_compaction (
         bdbm_hlm_req_gc_t* dst, 
         bdbm_hlm_req_gc_t* src, 
@@ -581,6 +586,14 @@ void hlm_reqs_pool_write_compaction (
                 dst_r->fmain.kp_ptr[dst_kp] = src_r->fmain.kp_ptr[src_kp];
                 dst_r->logaddr.lpa[dst_kp] = src_r->logaddr.lpa[src_kp];
                 ((int64_t*)dst_r->foob.data)[dst_kp] = ((int64_t*)src_r->foob.data)[src_kp];
+				//tjkim
+				dst_r->sID = src_r->sID;
+				if(dst_r->sID > 3 || dst_r->sID < 0) 
+					bdbm_msg("error on dst sID: %d, src_kp: %llu, dst_kp: %llu", dst_r->sID, src_kp, dst_kp);
+				dst_r->wtime = src_r->wtime;
+				if(dst_r->wtime > g_logical_wtime) 
+					bdbm_msg("error on dst wtime: %d, src_kp: %llu, dst_kp: %llu", dst_r->wtime, src_kp, dst_kp);
+
             } else {
                 /* otherwise, skip it */
                 continue;

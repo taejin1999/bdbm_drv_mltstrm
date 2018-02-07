@@ -306,7 +306,7 @@ static uint8_t __ramssd_prog_page (
 {
     uint8_t ret = 0;
     uint8_t* ptr_ramssd_addr = NULL;
-    uint32_t nr_kpages, loop, is_cs=0;
+    uint32_t nr_kpages, loop;
     //for debug
 
     /* get the memory address for the destined page */

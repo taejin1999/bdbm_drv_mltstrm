@@ -135,7 +135,7 @@ typedef struct {
 } bdbm_phyaddr_t;
 
 /* max kernel pages per physical flash page */
-#define BDBM_MAX_PAGES 1
+#define BDBM_MAX_PAGES 4
 
 /* a bluedbm blockio request */
 #define BDBM_BLKIO_MAX_VECS 512
@@ -147,6 +147,7 @@ typedef struct {
 	uint64_t bi_bvec_cnt; /* unit: kernel-page (4KB); it must be equal to 'bi_size / 8' */
 	uint8_t* bi_bvec_ptr[BDBM_BLKIO_MAX_VECS]; /* an array of 4 KB data for bvec */
 	uint8_t ret; /* a return value will be kept here */
+	uint8_t bi_stream;
 	void* bio; /* reserved for kernel's bio requests */
 	void* user; /* keep user's data structure */
 	void* user2; /* keep user's data structure */
@@ -169,6 +170,8 @@ typedef enum {
 typedef struct {
 	int64_t lpa[BDBM_MAX_PAGES];
 	int32_t ofs;	/* only used for reads */
+	//tjkim
+	uint8_t streamID;
 } bdbm_logaddr_t;
 
 typedef struct {
@@ -197,6 +200,9 @@ typedef struct {
 	/* physical layout */
 	bdbm_flash_page_main_t fmain;
 	bdbm_flash_page_oob_t foob;
+
+	uint8_t sID;
+	uint32_t wtime;
 } bdbm_llm_req_t;
 
 typedef struct {
@@ -357,6 +363,7 @@ typedef struct {
 	atomic64_t gc_write_cnt;
 	atomic64_t meta_read_cnt;
 	atomic64_t meta_write_cnt;
+	atomic64_t page_invalid_cnt;
 	uint64_t time_r_sw;
 	uint64_t time_r_q;
 	uint64_t time_r_tot;
@@ -371,6 +378,7 @@ typedef struct {
 	uint64_t time_gc_tot;
 	atomic64_t* util_r;
 	atomic64_t* util_w;
+	uint64_t ID_cnt[4];
 } bdbm_perf_monitor_t;
 
 /* the main data-structure for bdbm_drv */

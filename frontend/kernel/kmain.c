@@ -33,20 +33,6 @@ THE SOFTWARE.
 bdbm_drv_info_t* _bdi = NULL;
 
 // start hoon
-typedef unsigned long long ext4_fsblk_t;
-void ext4_extent_bdbm_register_communication(
-        struct bdbm_comm_operations* comm);
-
-int recieve_double_lpa(ext4_fsblk_t o_lpa, ext4_fsblk_t d_lpa, int len){
-    //printk("o_lpa = %llu, d_lpa = %llu\n\n", o_lpa, d_lpa);
-    _bdi->ptr_ftl_inf->remap(_bdi, (int64_t)o_lpa, (int64_t)d_lpa, len);
-}
-struct bdbm_comm_operations {
-	int (*send_double_lpa) (ext4_fsblk_t o_lpa, ext4_fsblk_t d_lpa, int len);
-};
-static struct bdbm_comm_operations bdbm_comm = {
-    .send_double_lpa = recieve_double_lpa,
-};
 // end hoon
 
 
@@ -77,7 +63,7 @@ static int __init bdbm_drv_init (void)
 	}
 
     //for communication with ext4
-    ext4_extent_bdbm_register_communication(&bdbm_comm);
+    //ext4_extent_bdbm_register_communication(&bdbm_comm);
 
 	return 0;
 }

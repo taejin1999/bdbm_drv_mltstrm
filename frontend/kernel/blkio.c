@@ -38,6 +38,8 @@ THE SOFTWARE.
 
 #include "hlm_reqs_pool.h"
 
+//tjkim
+#include "pmu.h"
 /*#define ENABLE_DISPLAY*/
 
 extern bdbm_drv_info_t* _bdi;
@@ -62,7 +64,7 @@ typedef struct {
 	bdbm_hlm_reqs_pool_t* hlm_reqs_pool;
 } bdbm_blkio_private_t;
 
-
+uint32_t g_cnt = 0;
 /* This is a call-back function invoked by a block-device layer */
 static bdbm_blkio_req_t* __get_blkio_req (struct bio *bio)
 {
@@ -85,6 +87,8 @@ static bdbm_blkio_req_t* __get_blkio_req (struct bio *bio)
     }
 */
 
+	//if(bio->bi_stream == 1 && g_cnt++ % 100 == 0) bdbm_msg("BDBM stream: %d", bio->bi_stream);
+	//br->bi_stream = bio->bi_stream;
 
 	/* get the type of the bio request */
 	if (bio->bi_rw & REQ_DISCARD){
@@ -98,6 +102,10 @@ static bdbm_blkio_req_t* __get_blkio_req (struct bio *bio)
 	else if (bio_data_dir (bio) == WRITE){
     //    printk("BDBM_DRV: WRITE Start\n");
 		br->bi_rw = REQTYPE_WRITE;
+		//tjkim
+		br->bi_stream = bio->bi_stream;
+		//if(br->bi_stream != 0 || g_cnt++ % 10000 == 0) bdbm_msg("bio->bi_stream: %d, lba: %lu", br->bi_stream, bio->bi_iter.bi_sector);
+
         if (bio->bi_rw & REQ_FUA){
             br->bi_rw = br->bi_rw | REQTYPE_FUA;
         }
@@ -146,13 +154,13 @@ static void __free_blkio_req (bdbm_blkio_req_t* br)
         bdbm_free (br);
 }
 
-//static void __host_blkio_make_request_fn (
-static blk_qc_t __host_blkio_make_request_fn (
+static void __host_blkio_make_request_fn (
+//static blk_qc_t __host_blkio_make_request_fn (
         struct request_queue *q, 
         struct bio *bio)
 {
     blkio_make_req (_bdi, (void*)bio);
-    return BLK_QC_T_NONE; /* for no polling */
+//    return BLK_QC_T_NONE; /* for no polling */
 }
 
 
@@ -223,11 +231,19 @@ void blkio_make_req (bdbm_drv_info_t* bdi, void* bio)
     bdbm_blkio_req_t* br = NULL;
     bdbm_hlm_req_t* hr = NULL;
 
+	/*
+	//tjkim
+	struct bio* tmp_bio = (struct bio*)bio;
+	if (bio_data_dir (tmp_bio) == WRITE)
+		pmu_inc_ID_cnt(bdi, (tmp_bio->bi_stream == 0) ? tmp_bio->bi_stream : tmp_bio->bi_stream-10);
+	*/
+
     /* get blkio */
     if ((br = __get_blkio_req ((struct bio*)bio)) == NULL) {
         bdbm_error ("__get_blkio_req () failed");
         goto fail;
     }
+
 
     /* get a free hlm_req from the hlm_reqs_pool */
     if ((hr = bdbm_hlm_reqs_pool_get_item (p->hlm_reqs_pool)) == NULL) {
@@ -277,10 +293,11 @@ void blkio_end_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
 
     /* end bio */
     if (hr->ret == 0)
-        bio_endio ((struct bio*)br->bio);
+        bio_endio ((struct bio*)br->bio, 0);
     else {
         bdbm_warning ("oops! make_req () failed with %d", hr->ret);
-        bio_io_error ((struct bio*)br->bio);
+        bio_endio ((struct bio*)br->bio, -EIO);
+        //bio_io_error ((struct bio*)br->bio);
     }
 
     /* free blkio_req */

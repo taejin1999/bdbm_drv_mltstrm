@@ -103,11 +103,15 @@ void hlm_nobuf_destroy (bdbm_drv_info_t* bdi)
 uint32_t __hlm_nobuf_make_trim_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* ptr_hlm_req)
 {
 	bdbm_ftl_inf_t* ftl = (bdbm_ftl_inf_t*)BDBM_GET_FTL_INF(bdi);
+	/*
 	uint64_t i;
 
 	for (i = 0; i < ptr_hlm_req->len; i++) {
 		ftl->invalidate_lpa (bdi, ptr_hlm_req->lpa + i, 1);
 	}
+	*/
+
+	ftl->invalidate_lpa (bdi, ptr_hlm_req->lpa, ptr_hlm_req->len);
 
 	return 0;
 }
@@ -129,7 +133,6 @@ uint32_t __hlm_buffered_read(bdbm_drv_info_t* bdi, bdbm_llm_req_t* lr){
 
 int __hlm_flush_buffer(bdbm_drv_info_t* bdi, bdbm_llm_req_t* lr){
     bdbm_hlm_nobuf_private_t* p = (bdbm_hlm_nobuf_private_t*)BDBM_HLM_PRIV(bdi);
-    bdbm_ftl_inf_t* ftl = BDBM_GET_FTL_INF(bdi);
     int i = 0, cnt = 0;
 
     lr->logaddr.ofs = -1;
@@ -184,6 +187,9 @@ uint32_t __hlm_buffered_write(bdbm_drv_info_t* bdi, bdbm_llm_req_t* lr){
     }
 }
 
+extern uint64_t g_logical_wtime;
+uint64_t num_subwrite_req = 0;
+uint32_t tmp = 0;
 uint32_t __hlm_nobuf_make_rw_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
 {
     bdbm_device_params_t* np = BDBM_GET_DEVICE_PARAMS(bdi);
@@ -206,13 +212,15 @@ uint32_t __hlm_nobuf_make_rw_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
                         hlm_reqs_pool_relocate_kp (lr, sp_ofs);
                     }
                 }
-            } else if (bdbm_is_write (lr->req_type)) {
+			} else if (bdbm_is_write (lr->req_type)) {
                 if(lr->logaddr.ofs != -1){
-                    if(__hlm_buffered_write(bdi, lr) == BDBM_MAX_PAGES){
+					if(__hlm_buffered_write(bdi, lr) == BDBM_MAX_PAGES){
                         if (ftl->get_free_ppa (bdi, lr->logaddr.lpa[0], &lr->phyaddr) != 0) {
                             bdbm_error ("`ftl->get_free_ppa' failed");
                             goto fail;
                         }
+						
+						lr->logaddr.ofs = 0;
                         if (ftl->map_lpa_to_ppa (bdi, &lr->logaddr, &lr->phyaddr) != 0) {
                             bdbm_error ("`ftl->map_lpa_to_ppa' failed");
                             goto fail;
@@ -224,10 +232,12 @@ uint32_t __hlm_nobuf_make_rw_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
                         bdbm_error ("`ftl->get_free_ppa' failed");
                         goto fail;
                     }
-                    if (ftl->map_lpa_to_ppa (bdi, &lr->logaddr, &lr->phyaddr) != 0) {
+					lr->logaddr.ofs = 0;
+					if (ftl->map_lpa_to_ppa (bdi, &lr->logaddr, &lr->phyaddr) != 0) {
                         bdbm_error ("`ftl->map_lpa_to_ppa' failed");
                         goto fail;
                     }
+
                 }
 
             } else {
@@ -251,10 +261,13 @@ uint32_t __hlm_nobuf_make_rw_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
                 bdbm_error ("`ftl->get_free_ppa' failed");
                 goto fail;
             }
+			lr->logaddr.ofs = 0;
             if (ftl->map_lpa_to_ppa (bdi, &lr->logaddr, phyaddr) != 0) {
                 bdbm_error ("`ftl->map_lpa_to_ppa' failed");
                 goto fail;
-            }
+			}
+			//if(tmp % 100000 == 0) bdbm_msg("3");
+
         } else {
             bdbm_error ("oops! invalid type (%x)", lr->req_type);
             bdbm_bug_on (1);
@@ -262,31 +275,37 @@ uint32_t __hlm_nobuf_make_rw_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
 
         /* (2) setup oob */
         for (j = 0; j < np->nr_subpages_per_page; j++) {
-            ((int64_t*)lr->foob.data)[j] = lr->logaddr.lpa[j];
+			((int64_t*)lr->foob.data)[j] = lr->logaddr.lpa[j];
+			if(lr->logaddr.lpa[j] != -1) num_subwrite_req++;
         }
     }
 
     if( (hr->req_type & REQTYPE_SYNC) || (hr->req_type & REQTYPE_FUA) ){
-        hr->req_type = REQTYPE_WRITE;
         bdbm_llm_req_t* lr = &hr->llm_reqs[hr->nr_llm_reqs];
+		int ret;
+        hr->req_type = REQTYPE_WRITE;
         hlm_reqs_pool_reset_fmain (&lr->fmain);
         hlm_reqs_pool_reset_logaddr (&lr->logaddr);
         lr->req_type = REQTYPE_WRITE;
         lr->ptr_hlm_req = (void*)hr;
 
-        int ret = __hlm_flush_buffer(bdi, lr);
+        ret = __hlm_flush_buffer(bdi, lr);
         if(ret > 0){
             hr->nr_llm_reqs++;
             if (ftl->get_free_ppa (bdi, lr->logaddr.lpa[0], &lr->phyaddr) != 0) {
                 bdbm_error ("`ftl->get_free_ppa' failed");
                 goto fail;
             }
+			lr->logaddr.ofs = 0;
             if (ftl->map_lpa_to_ppa (bdi, &lr->logaddr, &lr->phyaddr) != 0) {
                 bdbm_error ("`ftl->map_lpa_to_ppa' failed");
                 goto fail;
             }
+
+			//if(tmp % 100000 == 0) bdbm_msg("4");
             for (j = 0; j < np->nr_subpages_per_page; j++) {
-                ((int64_t*)lr->foob.data)[j] = lr->logaddr.lpa[j];
+				((int64_t*)lr->foob.data)[j] = lr->logaddr.lpa[j];
+				if(lr->logaddr.lpa[j] != -1) num_subwrite_req++;
             }
         }
     }
@@ -383,7 +402,9 @@ uint32_t hlm_nobuf_make_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
 #endif
 
     /* perform i/o */
-    if (bdbm_is_trim (hr->req_type)) {
+	if (bdbm_is_trim (hr->req_type)) {
+		//bdbm_msg("hlm TRIM size: %lld", hr->len);
+
         if ((ret = __hlm_nobuf_make_trim_req (bdi, hr)) == 0) {
             /* call 'ptr_host_inf->end_req' directly */
             bdi->ptr_host_inf->end_req (bdi, hr);

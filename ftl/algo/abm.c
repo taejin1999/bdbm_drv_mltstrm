@@ -108,6 +108,21 @@ void __bdbm_abm_destory_pst (babm_abm_subpage_t* pst)
 		bdbm_free (pst);
 }
 
+
+//tjkim
+uint32_t *validpages_per_block;
+uint8_t *message_buffer;
+#define BUFFER_SIZE 8192
+uint8_t gc_flag = 0;
+uint32_t num_last_dead_blocks = 0;
+
+uint64_t g_logical_wtime = 0;
+uint64_t lifetimesum_sID[4] = {0};
+uint32_t discarded_ID_cnt[4] = {0};
+uint64_t longest_lifetime[4] = {0};
+uint64_t shortest_lifetime[4] = {0};
+uint32_t validpages_ID[4] = {0};
+
 bdbm_abm_info_t* bdbm_abm_create (
 	bdbm_device_params_t* np,
 	uint8_t use_pst)
@@ -136,6 +151,8 @@ bdbm_abm_info_t* bdbm_abm_create (
 		bai->blocks[loop].block_no = __get_block_ofs (np, loop);
 		bai->blocks[loop].erase_count = 0;
 		bai->blocks[loop].pst = NULL;
+		bai->blocks[loop].sID = NULL;
+		bai->blocks[loop].wtime = NULL;
 		bai->blocks[loop].nr_invalid_subpages = 0;
 		/* create a 'page status table' (pst) if necessary */
 		if (use_pst) {
@@ -143,6 +160,15 @@ bdbm_abm_info_t* bdbm_abm_create (
 				bdbm_error ("__bdbm_abm_create_pst failed");
 				goto fail;
 			}
+			if ((bai->blocks[loop].sID = __bdbm_abm_create_pst (np)) == NULL) {
+				bdbm_error ("__bdbm_abm_create_pst failed");
+				goto fail;
+			}
+			if ((bai->blocks[loop].wtime = (uint32_t*)bdbm_malloc(sizeof(uint32_t)*np->nr_subpages_per_block)) == NULL) {
+				bdbm_error ("creating block wtime failed");
+				goto fail;
+			}
+			bdbm_memset(bai->blocks[loop].wtime, 0x00, sizeof(uint32_t)*np->nr_subpages_per_block);
 		}
 	}
 
@@ -191,6 +217,23 @@ bdbm_abm_info_t* bdbm_abm_create (
 			&(bai->list_head_free[bai->blocks[loop].channel_no][bai->blocks[loop].chip_no]));
 	}
 
+	//tjkim
+	validpages_per_block = (uint32_t*)bdbm_zmalloc(sizeof(uint32_t)*(bai->np->nr_subpages_per_block+1));
+	if(validpages_per_block == NULL) {
+		bdbm_error("malloc failed");
+		//return 1;
+	}
+	message_buffer = (char*)bdbm_zmalloc(sizeof(char)*BUFFER_SIZE);
+	if(message_buffer == NULL) {
+		bdbm_error("malloc failed");
+		bdbm_free(validpages_per_block);
+		//return 1;
+	}
+
+	for(loop = 0; loop < 4; loop++) {
+		shortest_lifetime[loop] = -1;
+	}
+
 	/* initialize # of blocks according to their types */
 	bai->nr_total_blks = np->nr_blocks_per_ssd;
 	bai->nr_free_blks = bai->nr_total_blks;
@@ -208,9 +251,27 @@ fail:
 	return NULL;
 }
 
+
+
 void bdbm_abm_destroy (bdbm_abm_info_t* bai) 
 {
 	uint64_t loop;
+	//tjkim
+	/*
+	uint64_t k, len = 0;
+	for (loop = 0; loop < bai->np->nr_blocks_per_ssd; loop++) {
+		for(k = 0; k < bai->np->nr_subpages_per_block; k++) {
+			if(bai->blocks[loop].pst[k] == BABM_ABM_SUBPAGE_NOT_INVALID)
+				validpages_ID[bai->blocks[loop].sID[k]]++;
+		}
+	}
+	len += sprintf(message_buffer+len, "validpages per IDs:");
+	for(k = 0; k < 4; k++) {
+		len += sprintf(message_buffer+len, "%d ", validpages_ID[k]);
+	}
+	bdbm_msg("%s", message_buffer);
+	memset(message_buffer, 0x00, BUFFER_SIZE);
+	*/
 
 	if (bai == NULL)
 		return;
@@ -236,10 +297,18 @@ void bdbm_abm_destroy (bdbm_abm_info_t* bai)
 		bdbm_free (bai->list_head_bad);
 	}
 	if (bai->blocks != NULL) {
-		for (loop = 0; loop < bai->np->nr_blocks_per_ssd; loop++)
+		for (loop = 0; loop < bai->np->nr_blocks_per_ssd; loop++) {
 			__bdbm_abm_destory_pst (bai->blocks[loop].pst);
+			__bdbm_abm_destory_pst (bai->blocks[loop].sID);
+			if(bai->blocks[loop].wtime != NULL) bdbm_free(bai->blocks[loop].wtime);
+		}
 		bdbm_free (bai->blocks);
 	}
+
+	//tjkim
+	bdbm_free(message_buffer);
+	bdbm_free(validpages_per_block);
+
 	bdbm_free (bai);
 }
 
@@ -276,13 +345,17 @@ bdbm_abm_block_t* bdbm_abm_get_free_block_prepare (
 
     struct list_head* head = &(bai->list_head_free[channel_no][chip_no]);
 
-    for(pos = (head)->next; pos != (head); pos = pos->next) {
-                blk = list_entry (pos, bdbm_abm_block_t, list);
-                        //printk("ch=%llu, chip=%llu, block=%llu\n", blk->channel_no,
-                         //                       blk->chip_no, blk->block_no);
-                            }
+	for(pos = (head)->next; pos != (head); pos = pos->next) {
+		blk = list_entry (pos, bdbm_abm_block_t, list);
+		//printk("ch=%llu, chip=%llu, block=%llu\n", blk->channel_no,
+		//                       blk->chip_no, blk->block_no);
+	}
 
-
+	/* check some error cases */
+	if (bai->nr_free_blks == 0) {
+		bdbm_msg ("oops! bai->nr_free_blks == 0");
+	}
+	__bdbm_abm_check_status (bai);
 
 	list_for_each (pos, &(bai->list_head_free[channel_no][chip_no])) {
 		cnt++;
@@ -436,7 +509,12 @@ void bdbm_abm_erase_block (
 			BABM_ABM_SUBPAGE_NOT_INVALID, 
 			sizeof (babm_abm_subpage_t) * bai->np->nr_subpages_per_block
 		);
+		bdbm_memset (blk->sID, BABM_ABM_SUBPAGE_NOT_INVALID, sizeof (babm_abm_subpage_t) * bai->np->nr_subpages_per_block);
+		bdbm_memset (blk->wtime, 0x00, sizeof (uint32_t) * bai->np->nr_subpages_per_block);
 	}
+
+	//tjkim
+	if(gc_flag == 0) gc_flag = 1;
 }
 
 void bdbm_abm_set_to_dirty_block (
@@ -508,6 +586,7 @@ void bdbm_abm_set_to_dirty_block (
 
 }
 
+uint64_t num_invalidated_pages = 0;
 void bdbm_abm_invalidate_page (
 	bdbm_abm_info_t* bai, 
 	uint64_t channel_no, 
@@ -562,6 +641,16 @@ void bdbm_abm_invalidate_page (
 		/* increase # of invalid pages in the block */
 		b->nr_invalid_subpages++;
 		bdbm_bug_on (b->nr_invalid_subpages > bai->np->nr_subpages_per_block);
+
+		//tjkim
+		/*
+		num_invalidated_pages++;
+		if(b->wtime[pst_off] != 0 || b->wtime[pst_off] > 0) {
+			bdbm_bug_on (b->sID[pst_off] < 0);
+			lifetimesum_sID[b->sID[pst_off]] += (g_logical_wtime - b->wtime[pst_off]);
+			discarded_ID_cnt[b->sID[pst_off]]++;
+		}
+		*/
 	} else {
 		/* ignore if it was invalidated before */
 	}
@@ -590,6 +679,7 @@ uint32_t bdbm_abm_load (bdbm_abm_info_t* bai, const char* fn)
 		pos += bdbm_fread (fp, pos, (uint8_t*)&bai->blocks[i].nr_invalid_subpages, sizeof(bai->blocks[i].nr_invalid_subpages));
 		if (bai->blocks[i].pst) {
 			pos += bdbm_fread (fp, pos, (uint8_t*)bai->blocks[i].pst, sizeof (babm_abm_subpage_t) * bai->np->nr_subpages_per_block);
+			pos += bdbm_fread (fp, pos, (uint8_t*)bai->blocks[i].sID, sizeof (babm_abm_subpage_t) * bai->np->nr_subpages_per_block);
 		} else {
 			pos += sizeof (babm_abm_subpage_t) * bai->np->nr_subpages_per_block;
 		}
@@ -666,6 +756,7 @@ uint32_t bdbm_abm_store (bdbm_abm_info_t* bai, const char* fn)
 		pos += bdbm_fwrite (fp, pos, (uint8_t*)&bai->blocks[i].nr_invalid_subpages, sizeof(bai->blocks[i].nr_invalid_subpages));
 		if (bai->blocks[i].pst) {
 			pos += bdbm_fwrite (fp, pos, (uint8_t*)bai->blocks[i].pst, sizeof (babm_abm_subpage_t) * bai->np->nr_subpages_per_block);
+			pos += bdbm_fwrite (fp, pos, (uint8_t*)bai->blocks[i].sID, sizeof (babm_abm_subpage_t) * bai->np->nr_subpages_per_block);
 		} else {
 			pos += sizeof (babm_abm_subpage_t) * bai->np->nr_subpages_per_block;
 		}
@@ -684,3 +775,39 @@ uint32_t bdbm_abm_store (bdbm_abm_info_t* bai, const char* fn)
 	return 0;
 }
 
+
+void bdbm_page_ipr_display(bdbm_abm_info_t* bai, uint64_t discard_len) {
+	uint32_t len=0, i;
+	uint32_t num_blocks_half_dead = bai->np->nr_subpages_per_block / 2;
+
+	return;
+	if(gc_flag == 0) return;
+
+	if(discard_len == 1) return;
+
+	for(i = 0; i < bai->np->nr_blocks_per_ssd; i++) {
+		validpages_per_block[bai->blocks[i].nr_invalid_subpages]++;
+	}
+
+	if(num_last_dead_blocks == validpages_per_block[bai->np->nr_subpages_per_page+1])
+		return;
+	num_last_dead_blocks = validpages_per_block[bai->np->nr_subpages_per_page+1];
+
+	len += sprintf(message_buffer+len, "%lld:", discard_len);
+
+	for(i = 0; i < num_blocks_half_dead; i++) {
+		len += sprintf(message_buffer+len, "%d ", validpages_per_block[i]);
+	}
+	bdbm_msg("%s", message_buffer);
+
+	memset(message_buffer, 0x00, BUFFER_SIZE);
+	len = 0;
+
+	for(i = num_blocks_half_dead; i < bai->np->nr_subpages_per_block+1; i++) {
+		len += sprintf(message_buffer+len, "%d ", validpages_per_block[i]);
+	}
+	bdbm_msg("%s", message_buffer);
+	
+
+	memset(validpages_per_block, 0x00, sizeof(uint32_t)*(bai->np->nr_subpages_per_block+1));
+}

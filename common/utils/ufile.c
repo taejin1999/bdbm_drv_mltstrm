@@ -100,6 +100,27 @@ uint64_t bdbm_fwrite (bdbm_file_t file, uint64_t offset, uint8_t* data, uint64_t
 	uint64_t ret = 0;
 	uint64_t len = 0;
 
+	if(file == NULL)
+	{
+		return -ENOENT;
+	}
+
+	if(file->f_op->write == NULL)
+	{
+		return -ENOSYS;
+	}
+
+	if(((file->f_flags & O_ACCMODE) & (O_WRONLY | O_RDWR)) == 0)
+	{
+		return -EACCES;
+	}
+
+	oldfs = get_fs();
+	set_fs(KERNEL_DS);
+	ret = file->f_op->write(file, data, size, &file->f_pos);
+	set_fs(oldfs);
+
+#if 0
 	oldfs = get_fs ();
 	set_fs (get_ds ());
 	while (len < size) {
@@ -110,6 +131,7 @@ uint64_t bdbm_fwrite (bdbm_file_t file, uint64_t offset, uint8_t* data, uint64_t
 	}
 	/*ret = vfs_write (file, data, size, &offset);*/
 	set_fs (oldfs);
+#endif
 	return ret;
 }
 

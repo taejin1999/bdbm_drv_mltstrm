@@ -12,6 +12,7 @@ void pmu_display (bdbm_drv_info_t* bdi);
 void pmu_inc (bdbm_drv_info_t* bdi, bdbm_llm_req_t* llm_req);
 void pmu_inc_read (bdbm_drv_info_t* bdi);
 void pmu_inc_write (bdbm_drv_info_t* bdi);
+void pmu_inc_invalid (bdbm_drv_info_t* bdi);
 void pmu_inc_rmw_read (bdbm_drv_info_t* bdi);
 void pmu_inc_rmw_write (bdbm_drv_info_t* bdi);
 void pmu_inc_gc (bdbm_drv_info_t* bdi);
@@ -39,5 +40,7 @@ void pmu_update_r_tot (bdbm_drv_info_t* bdi, bdbm_stopwatch_t* req);
 void pmu_update_w_tot (bdbm_drv_info_t* bdi, bdbm_stopwatch_t* req);
 void pmu_update_rmw_tot (bdbm_drv_info_t* bdi, bdbm_stopwatch_t* req);
 void pmu_update_gc_tot (bdbm_drv_info_t* bdi, bdbm_stopwatch_t* sw);
+
+void pmu_inc_ID_cnt (bdbm_drv_info_t* bdi, uint64_t ID);
 
 #endif
