@@ -1,0 +1,12 @@
+# compiled source #
+*.o
+*.cmd
+*.ko
+*.mod
+*.mod.c
+*.mod.o
+
+
+# editing source #
+cscope.out
+tags

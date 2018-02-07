@@ -1,0 +1,3 @@
+0x6f91458f	bdbm_dm_get_inf	/home/tjkim/Research/bdbm_drv_fine_grained/devices/ramdrive/risa_dev_ramdrive	EXPORT_SYMBOL
+0xeacc3330	bdbm_dm_exit	/home/tjkim/Research/bdbm_drv_fine_grained/devices/ramdrive/risa_dev_ramdrive	EXPORT_SYMBOL
+0x49afe71c	bdbm_dm_init	/home/tjkim/Research/bdbm_drv_fine_grained/devices/ramdrive/risa_dev_ramdrive	EXPORT_SYMBOL
