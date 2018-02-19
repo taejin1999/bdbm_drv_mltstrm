@@ -124,6 +124,9 @@ enum BDBM_REQTYPE {
 #define bdbm_is_erase(type) (((type & REQTYPE_IO_ERASE) == REQTYPE_IO_ERASE) ? 1 : 0)
 #define bdbm_is_trim(type) (((type & REQTYPE_IO_TRIM) == REQTYPE_IO_TRIM) ? 1 : 0)
 
+//tjkim
+/* number of stream that the device can manage */
+#define BDBM_STREAM_NUM 10
 
 /* a physical address */
 typedef struct {

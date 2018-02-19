@@ -98,7 +98,6 @@ uint64_t bdbm_fwrite (bdbm_file_t file, uint64_t offset, uint8_t* data, uint64_t
 {
 	mm_segment_t oldfs;
 	uint64_t ret = 0;
-	uint64_t len = 0;
 
 	if(file == NULL)
 	{
@@ -121,6 +120,7 @@ uint64_t bdbm_fwrite (bdbm_file_t file, uint64_t offset, uint8_t* data, uint64_t
 	set_fs(oldfs);
 
 #if 0
+	uint64_t len = 0;
 	oldfs = get_fs ();
 	set_fs (get_ds ());
 	while (len < size) {
@@ -172,6 +172,9 @@ void bdbm_flog (const char* filename, char* string)
 	bdbm_fwrite (fp, 0, string, strlen (string));
 	bdbm_fclose (fp);
 }
+
+
+
 
 #elif defined(USER_MODE)
 

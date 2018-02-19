@@ -1,12 +1,15 @@
 # compiled source #
 *.o
+*.o.cmd
 *.cmd
 *.ko
 *.mod
 *.mod.c
 *.mod.o
-
+*.symvers
+*.order
 
 # editing source #
 cscope.out
 tags
+

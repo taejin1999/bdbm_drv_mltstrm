@@ -152,10 +152,9 @@ static void* __ramssd_alloc_ssdram (bdbm_device_params_t* ptr_np)
     bdbm_msg ("=====================================================================");
     bdbm_msg ("RAM DISK INFO");
     bdbm_msg ("=====================================================================");
-    bdbm_msg ("the SSD capacity: %llu (B), %llu (KB), %llu (MB)",
-            ptr_np->device_capacity_in_byte,
-            BDBM_SIZE_KB(ptr_np->device_capacity_in_byte),
-            BDBM_SIZE_MB(ptr_np->device_capacity_in_byte));
+    bdbm_msg ("the SSD capacity: %llu (MB), %llu (GB)",
+            BDBM_SIZE_MB(ptr_np->device_capacity_in_byte),
+			BDBM_SIZE_GB(ptr_np->device_capacity_in_byte));
 
     /* allocate the memory for the SSD */
     if ((ptr_ramssd = (void*)bdbm_malloc

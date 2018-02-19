@@ -587,13 +587,14 @@ void hlm_reqs_pool_write_compaction (
                 dst_r->logaddr.lpa[dst_kp] = src_r->logaddr.lpa[src_kp];
                 ((int64_t*)dst_r->foob.data)[dst_kp] = ((int64_t*)src_r->foob.data)[src_kp];
 				//tjkim
+#ifdef LIFEINFO_IN_BLOCK
 				dst_r->sID = src_r->sID;
-				if(dst_r->sID > 3 || dst_r->sID < 0) 
+				if(dst_r->sID > BDBM_STREAM_NUM-1 || dst_r->sID < 0) 
 					bdbm_msg("error on dst sID: %d, src_kp: %llu, dst_kp: %llu", dst_r->sID, src_kp, dst_kp);
 				dst_r->wtime = src_r->wtime;
 				if(dst_r->wtime > g_logical_wtime) 
 					bdbm_msg("error on dst wtime: %d, src_kp: %llu, dst_kp: %llu", dst_r->wtime, src_kp, dst_kp);
-
+#endif
             } else {
                 /* otherwise, skip it */
                 continue;

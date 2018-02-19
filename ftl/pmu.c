@@ -45,10 +45,10 @@ THE SOFTWARE.
 #include "utime.h"
 
 //tjkim
-extern uint64_t lifetimesum_sID[4];
-extern uint64_t discarded_ID_cnt[4];
-extern uint64_t longest_lifetime[4];
-extern uint64_t shortest_lifetime[4];
+#ifdef GET_AVG_LIFETIME
+extern uint64_t lifetimesum_sID[BDBM_STREAM_NUM];
+extern uint64_t discarded_ID_cnt[BDBM_STREAM_NUM];
+#endif
 extern uint64_t num_subwrite_req;
 
 #ifdef USE_PMU
@@ -104,7 +104,7 @@ void pmu_create (bdbm_drv_info_t* bdi)
             atomic64_set (&bdi->pm.util_w[i], 0);
     }
 
-	for(i = 0; i < 4; i++) {
+	for(i = 0; i < BDBM_STREAM_NUM; i++) {
 		bdi->pm.ID_cnt[i] = 0;
 	}
 }
@@ -492,7 +492,7 @@ void pmu_display (bdbm_drv_info_t* bdi)
             atomic64_read (&bdi->pm.page_write_cnt));
 	j = 0;
 	j += sprintf(str, "num. in-written IDs:\t" );
-    for (i = 0, sum = 0; i < 4; i++) {
+    for (i = 0, sum = 0; i < BDBM_STREAM_NUM; i++) {
 		sum += bdi->pm.ID_cnt[i];
 		j += sprintf (str+j, "%llu ", bdi->pm.ID_cnt[i]);
 	}
@@ -501,15 +501,17 @@ void pmu_display (bdbm_drv_info_t* bdi)
 	bdbm_msg ("%s", str);
 	bdbm_memset (str, 0x00, sizeof (str));
 
+#ifdef GET_AVG_LIFETIME
 	j = 0;
 	j += sprintf(str, "num. discarded IDs:\t" );
-    for (i = 0, sum = 0; i < 4; i++) {
+    for (i = 0, sum = 0; i < BDBM_STREAM_NUM; i++) {
 		sum += discarded_ID_cnt[i];
 		j += sprintf (str+j, "%lld ", discarded_ID_cnt[i]);
 	}
 	j += sprintf (str+j, "sum: %llu ", sum);
 	bdbm_msg ("%s", str);
 	bdbm_memset (str, 0x00, sizeof (str));
+#endif
 
     bdbm_msg ("# of page rmw reads: %ld", 
             atomic64_read (&bdi->pm.rmw_read_cnt));
@@ -575,10 +577,11 @@ void pmu_display (bdbm_drv_info_t* bdi)
     }
     bdbm_msg ("");
 
+#ifdef GET_AVG_LIFETIME
     bdbm_msg ("[8] Avg. Lifetime of type");
 	j = 0;
 	j += sprintf(str, "total lifetime:" );
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < BDBM_STREAM_NUM; i++) {
 		j += sprintf (str+j, "%llu ", lifetimesum_sID[i]);
 	}
 	bdbm_msg ("%s", str);
@@ -586,27 +589,12 @@ void pmu_display (bdbm_drv_info_t* bdi)
 
 	j = 0;
 	j += sprintf(str, "avg. lifetime:" );
-	for (i = 0; i < 4; i++) {
+	for (i = 0; i < BDBM_STREAM_NUM; i++) {
 		j += sprintf (str+j, "%llu ",  (discarded_ID_cnt[i] == 0) ? 0 :  lifetimesum_sID[i]/discarded_ID_cnt[i]);
 	}
 	bdbm_msg ("%s", str);
 	bdbm_memset (str, 0x00, sizeof (str));
-
-	j = 0;
-	j += sprintf(str, "longest lifetime:" );
-    for (i = 0; i < 4; i++) {
-		j += sprintf (str+j, "%llu ", longest_lifetime[i]);
-	}
-	bdbm_msg ("%s", str);
-	bdbm_memset (str, 0x00, sizeof (str));
-
-	j = 0;
-	j += sprintf(str, "shortest lifetime:" );
-    for (i = 0; i < 4; i++) {
-		j += sprintf (str+j, "%lld ", shortest_lifetime[i]);
-	}
-	bdbm_msg ("%s", str);
-	bdbm_memset (str, 0x00, sizeof (str));
+#endif
 
     bdbm_msg ("-----------------------------------------------");
     bdbm_msg ("-----------------------------------------------");
