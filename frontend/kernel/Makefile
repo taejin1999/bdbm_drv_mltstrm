@@ -70,6 +70,7 @@ robusta_drv-y := \
 	$(FTL)/queue/prior_queue.o \
 	$(FTL)/queue/rd_prior_queue.o \
 	$(FTL)/hlm_reqs_pool.o \
+	$(FTL)/autostream.o \
 	$(DM_COMMON)/dev_params.o \
 	$(COMMON)/utils/utime.o \
 	$(COMMON)/utils/ufile.o \

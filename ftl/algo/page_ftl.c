@@ -51,6 +51,7 @@ THE SOFTWARE.
 #include "algo/abm.h"
 #include "algo/page_ftl.h"
 #include "pmu.h"
+#include "autostream.h"
 
 bdbm_drv_info_t* this;
 
@@ -331,6 +332,7 @@ uint32_t bdbm_page_ftl_create (bdbm_drv_info_t* bdi)
 	INIT_WORK( &(work->my_work), pc_work_handler);
 	wq = create_singlethread_workqueue("pc_wq");
 
+	autostream_create_queues(bdi);
 	return 0;
 }
 
@@ -367,6 +369,8 @@ void bdbm_page_ftl_destroy (bdbm_drv_info_t* bdi)
 	if(wq)
 		destroy_workqueue(wq);
 	kfree(work);
+
+	autostream_destroy_queues();
 }
 
 extern uint64_t g_logical_wtime;
@@ -433,6 +437,7 @@ uint32_t bdbm_page_ftl_map_lpa_to_ppa (
 	bdbm_page_mapping_entry_t* me = NULL;
 	int k;
 	int8_t ID;
+	int32_t cnt = 0;
 
 	//tjkim
 	/*
@@ -442,6 +447,9 @@ uint32_t bdbm_page_ftl_map_lpa_to_ppa (
 	bdbm_abm_block_t* b = &p->bai->blocks[blk_idx];
 	*/
 
+	if((logaddr->ofs == 0) && (logaddr->streamID == 0)) {
+		if(cnt++ % 100000 == 0) bdbm_msg("page_ftl: sID is 0, %lld", logaddr->lpa[0]);
+	}
 	/* is it a valid logical address */
 	for (k = 0; k < np->nr_subpages_per_page; k++) {
 		if (logaddr->lpa[k] == -1) {
@@ -514,7 +522,7 @@ uint32_t bdbm_page_ftl_map_lpa_to_ppa (
 		ID = logaddr->streamID;
 
 		if(logaddr->ofs == 0) { // count if it's user request (ofs==0), skip for gc req (ofs==wtime).
-			if(ID != 0) ID -= 10;
+			//if(ID != 0) ID -= 10;
 			bdbm_bug_on(ID < 0 || ID > BDBM_STREAM_NUM);
 			me->sID = ID;
 			me->writtentime = g_logical_wtime++;
