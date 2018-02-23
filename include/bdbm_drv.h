@@ -175,6 +175,7 @@ typedef struct {
 	int32_t ofs;	/* only used for reads */
 	//tjkim
 	uint8_t streamID;
+	uint8_t type;
 } bdbm_logaddr_t;
 
 typedef struct {

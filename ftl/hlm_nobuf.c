@@ -146,10 +146,6 @@ int __hlm_flush_buffer(bdbm_drv_info_t* bdi, bdbm_llm_req_t* lr){
     }
     p->cur_buf_ofs = 0;
 
-	if(lr->logaddr.streamID == 0) {
-		//bdbm_msg("flush_buffer: sID is 0, %lld", lr->logaddr.lpa[0]);
-	}
-
     return cnt;
 }
 
@@ -181,8 +177,6 @@ uint32_t __hlm_buffered_write(bdbm_drv_info_t* bdi, bdbm_llm_req_t* lr){
             lr->logaddr.lpa[i] = p->oob[i];
             p->oob[i] = -1;
         }
-		if(lr->logaddr.streamID == 0)
-			bdbm_msg("buffered_write: sID is 0, %lld", lr->logaddr.lpa[0]);
         p->cur_buf_ofs = 0;
         return BDBM_MAX_PAGES;
     }else{ 
@@ -202,15 +196,8 @@ uint32_t __hlm_nobuf_make_rw_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
     bdbm_ftl_inf_t* ftl = BDBM_GET_FTL_INF(bdi);
     bdbm_llm_req_t* lr = NULL;
     uint64_t i = 0, j = 0, sp_ofs;
-	int32_t cnt = 0, cnt2 = 0;
-
-	if(bdbm_is_write(hr->req_type)){
-		for(i = 0; i < hr->nr_llm_reqs; i++) {
-			lr = &(hr->llm_reqs[i]);
-			if(lr != NULL && lr->logaddr.streamID == 0)
-				bdbm_msg("sID is 0, %lld", lr->logaddr.lpa[0]);
-		}
-	}
+	int32_t old_ofs;
+	
 
     /* perform mapping with the FTL */
     bdbm_hlm_for_each_llm_req (lr, hr, i) {
@@ -235,13 +222,13 @@ uint32_t __hlm_nobuf_make_rw_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
                             goto fail;
                         }
 						
+						old_ofs = lr->logaddr.ofs;
 						lr->logaddr.ofs = 0;
-						if(lr->logaddr.streamID == 0 && cnt++ % 100000 == 0)
-							bdbm_msg("hlm0: sID is 0, %lld, %lld", lr->logaddr.lpa[0], i);
                         if (ftl->map_lpa_to_ppa (bdi, &lr->logaddr, &lr->phyaddr) != 0) {
                             bdbm_error ("`ftl->map_lpa_to_ppa' failed");
                             goto fail;
                         }
+						lr->logaddr.ofs = old_ofs;
                     }
                 }
                 else{
@@ -307,6 +294,7 @@ uint32_t __hlm_nobuf_make_rw_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
         lr->ptr_hlm_req = (void*)hr;
 		if(hr->nr_llm_reqs != 0) {
 			lr->logaddr.streamID = hr->llm_reqs[hr->nr_llm_reqs-1].logaddr.streamID;
+			lr->logaddr.type = hr->llm_reqs[hr->nr_llm_reqs-1].logaddr.type;
 		}
 
         ret = __hlm_flush_buffer(bdi, lr);
@@ -316,15 +304,15 @@ uint32_t __hlm_nobuf_make_rw_req (bdbm_drv_info_t* bdi, bdbm_hlm_req_t* hr)
                 bdbm_error ("`ftl->get_free_ppa' failed");
                 goto fail;
             }
+
+			old_ofs = lr->logaddr.ofs;
 			lr->logaddr.ofs = 0;
-			if(lr->logaddr.streamID == 0 && cnt2++ % 100000 == 0)
-				bdbm_msg("hlm3: sID is 0, %lld, %lld", lr->logaddr.lpa[0], hr->nr_llm_reqs);
 
             if (ftl->map_lpa_to_ppa (bdi, &lr->logaddr, &lr->phyaddr) != 0) {
                 bdbm_error ("`ftl->map_lpa_to_ppa' failed");
                 goto fail;
             }
-
+			lr->logaddr.ofs = old_ofs;
 			//if(tmp % 100000 == 0) bdbm_msg("4");
             for (j = 0; j < np->nr_subpages_per_page; j++) {
 				((int64_t*)lr->foob.data)[j] = lr->logaddr.lpa[j];

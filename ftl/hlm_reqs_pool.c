@@ -327,7 +327,7 @@ static int __hlm_reqs_pool_create_write_req (
 	bdbm_llm_req_t* ptr_lr = NULL;
     int nr_valid;
     int add;
-	int32_t sID;
+	int8_t sID, type;
 
 	/* expand boundary sectors */
 	sec_start = BDBM_ALIGN_DOWN (br->bi_offset, NR_KSECTORS_IN(pool->map_unit));
@@ -343,6 +343,10 @@ static int __hlm_reqs_pool_create_write_req (
 	bdbm_bug_on (nr_llm_reqs > BDBM_BLKIO_MAX_VECS);
 
 	sID = get_streamid(sec_start / NR_KSECTORS_IN(pool->map_unit));
+	type = (br->bi_stream > 10)?br->bi_stream-10:br->bi_stream;
+	if(type < 0 || type > BDBM_STREAM_NUM) {
+		bdbm_msg("type ID is %d", type);
+	}
 	ptr_lr = &hr->llm_reqs[0];
 	for (i = 0; i < nr_llm_reqs; i++) {
 		int fm_ofs = 0;
@@ -388,7 +392,7 @@ static int __hlm_reqs_pool_create_write_req (
         }
 
 		//tjkim
-		//ptr_lr->logaddr.streamID = br->bi_stream;
+		ptr_lr->logaddr.type = type;
 		ptr_lr->logaddr.streamID = sID;
 
         /* go to the next */
@@ -433,6 +437,7 @@ static int __hlm_reqs_pool_create_write_req (
                 next->logaddr.lpa[k] = ptr_lr->logaddr.lpa[k];
                 next->logaddr.ofs = k;
 				next->logaddr.streamID = sID;
+				next->logaddr.type = type;
                 next->ptr_hlm_req = (void*)hr;
 
                 ptr_lr->fmain.kp_stt[k] = KP_STT_HOLE;
@@ -451,12 +456,13 @@ static int __hlm_reqs_pool_create_write_req (
     hr->blkio_req = (void*)br;
     hr->ret = 0;
 
+	/*
 	for(i = 0; i < hr->nr_llm_reqs; i++) {
 		ptr_lr = &(hr->llm_reqs[i]);
 		if(ptr_lr->logaddr.streamID != sID)
 			bdbm_msg("sID is not equal, lr: %d, sID: %d", ptr_lr->logaddr.streamID, sID);
-
 	}
+	*/
 
 /*
     lr = &hr->llm_reqs[0];

@@ -4,4 +4,4 @@
 
 uint32_t autostream_create_queues(bdbm_drv_info_t* bdi);
 uint32_t autostream_destroy_queues(void);
-int32_t get_streamid(uint64_t sLBA);
+int8_t get_streamid(uint64_t sLBA);

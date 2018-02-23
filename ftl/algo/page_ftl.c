@@ -87,7 +87,8 @@ typedef struct {
 	bdbm_phyaddr_t phyaddr; /* physical location */
 	uint8_t sp_off;
 	int64_t writtentime;
-	uint8_t  sID;
+	uint8_t sID;
+	uint8_t type;
 } bdbm_page_mapping_entry_t;
 
 typedef struct {
@@ -138,6 +139,7 @@ bdbm_page_mapping_entry_t* __bdbm_page_ftl_create_mapping_table (
 		me[loop].phyaddr.page_no = PFTL_PAGE_INVALID_ADDR;
 		me[loop].sp_off = -1;
 		me[loop].sID = -1;
+		me[loop].type = -1;
 		me[loop].writtentime = -1;
 	}
 
@@ -223,6 +225,11 @@ void __bdbm_page_ftl_destroy_active_blocks (
 
 bdbm_file_t fp_ID[BDBM_STREAM_NUM];
 uint64_t fp_ID_pos[BDBM_STREAM_NUM] = {0};
+bdbm_file_t fp_type[BDBM_STREAM_NUM];
+uint64_t fp_type_pos[BDBM_STREAM_NUM] = {0};
+bdbm_file_t fp_all;
+uint64_t fp_all_pos = 0;
+
 
 static void pc_work_handler(struct work_struct *w);
 static struct workqueue_struct *wq = 0;
@@ -230,25 +237,30 @@ static struct workqueue_struct *wq = 0;
 typedef struct {
 	struct work_struct my_work;
 	uint64_t lifetime;
-	uint64_t ID;
+	uint8_t ID;
+	uint8_t type;
 }my_work_t;
 
 my_work_t *work;
 
-char buffer[128] = {0};
+#define LIFETIME_BUFFER_SIZE 256
+char buffer[LIFETIME_BUFFER_SIZE] = {0};
 static void pc_work_handler(struct work_struct *w) {
 	my_work_t *temp;
 	uint64_t lifetime;
-	uint64_t ID;
+	uint8_t ID;
+	uint8_t type;
 
 	temp = container_of(w, my_work_t, my_work);
 	lifetime = temp->lifetime;
 	ID = temp->ID;
+	type = temp->type;
 
 	sprintf(buffer, "%lld\n", lifetime);
-	//file_write(buffer, strlen(buffer), filpbio);
+	fp_type_pos[type] += bdbm_fwrite(fp_type[type], fp_type_pos[type], buffer, strlen(buffer));
 	fp_ID_pos[ID] += bdbm_fwrite(fp_ID[ID], fp_ID_pos[ID], buffer, strlen(buffer));
-        //pos += bdbm_fwrite (fp, pos, (uint8_t*)&me[i], sizeof (bdbm_page_mapping_entry_t));
+	fp_all_pos += bdbm_fwrite(fp_all, fp_all_pos, buffer, strlen(buffer));
+	memset(buffer, 0x00, LIFETIME_BUFFER_SIZE);
 }
 
 uint32_t bdbm_page_ftl_create (bdbm_drv_info_t* bdi)
@@ -319,12 +331,22 @@ uint32_t bdbm_page_ftl_create (bdbm_drv_info_t* bdi)
 
 	//tjkim
 	for (i = 0; i < BDBM_STREAM_NUM; i++) {
-		sprintf(buffer, "/tmp/lifetime%d.dat", i);
+		sprintf(buffer, "/tmp/lifetime_sID%d.dat", i);
 		if((fp_ID[i] = bdbm_fopen(buffer, O_CREAT | O_WRONLY, 0777)) == 0) {
 			bdbm_error ("bdbm_fopen failed");
 			return 1;
 		}
+		sprintf(buffer, "/tmp/lifetime_type%d.dat", i);
+		if((fp_type[i] = bdbm_fopen(buffer, O_CREAT | O_WRONLY, 0777)) == 0) {
+			bdbm_error ("bdbm_fopen failed");
+			return 1;
+		}
 	}
+	if((fp_all = bdbm_fopen("/tmp/lifetime.dat", O_CREAT | O_WRONLY, 0777)) == 0) {
+		bdbm_error ("bdbm_fopen failed");
+		return 1;
+	}
+
 	memset(buffer, 0x00, 128);
 
 	work = (my_work_t*)kmalloc(sizeof(my_work_t), GFP_KERNEL);
@@ -365,7 +387,9 @@ void bdbm_page_ftl_destroy (bdbm_drv_info_t* bdi)
 	//tjkim
 	for(i = 0; i < BDBM_STREAM_NUM; i++){
 		bdbm_fclose(fp_ID[i]);
+		bdbm_fclose(fp_type[i]);
 	}
+	bdbm_fclose(fp_all);
 	if(wq)
 		destroy_workqueue(wq);
 	kfree(work);
@@ -437,7 +461,6 @@ uint32_t bdbm_page_ftl_map_lpa_to_ppa (
 	bdbm_page_mapping_entry_t* me = NULL;
 	int k;
 	int8_t ID;
-	int32_t cnt = 0;
 
 	//tjkim
 	/*
@@ -447,9 +470,6 @@ uint32_t bdbm_page_ftl_map_lpa_to_ppa (
 	bdbm_abm_block_t* b = &p->bai->blocks[blk_idx];
 	*/
 
-	if((logaddr->ofs == 0) && (logaddr->streamID == 0)) {
-		if(cnt++ % 100000 == 0) bdbm_msg("page_ftl: sID is 0, %lld", logaddr->lpa[0]);
-	}
 	/* is it a valid logical address */
 	for (k = 0; k < np->nr_subpages_per_page; k++) {
 		if (logaddr->lpa[k] == -1) {
@@ -494,20 +514,24 @@ uint32_t bdbm_page_ftl_map_lpa_to_ppa (
 				/*
 				lifetime = ktime_to_us(ktime_get())- me->writtentime;
 				bdbm_bug_on(lifetime < 0);
-				 */
-				bdbm_bug_on(me->writtentime < 0 || me->writtentime > g_logical_wtime);
-				bdbm_bug_on(me->sID < 0 || me->sID > BDBM_STREAM_NUM);
-				lifetime = g_logical_wtime - me->writtentime;
+				*/
+				if(me->writtentime > 0) {
+					bdbm_bug_on(me->writtentime < 0 || me->writtentime > g_logical_wtime);
+					bdbm_bug_on(me->sID < 0 || me->sID > BDBM_STREAM_NUM);
+					lifetime = g_logical_wtime - me->writtentime;
 #ifdef GET_AVG_LIFETIME
-				lifetimesum_sID[me->sID] += lifetime;
-				discarded_ID_cnt[me->sID]++;
+					lifetimesum_sID[me->sID] += lifetime;
+					discarded_ID_cnt[me->sID]++;
 #endif
-				work->lifetime = lifetime;
-				work->ID = me->sID;
-				queue_work(wq, &(work->my_work));
+					work->lifetime = lifetime;
+					work->ID = me->sID;
+					work->type = me->type;
+					queue_work(wq, &(work->my_work));
 
-				me->sID = -1;
-				me->writtentime = -1;
+					me->sID = -1;
+					me->type = -1;
+					me->writtentime = -1;
+				}
 			}
 		}
 
@@ -518,13 +542,28 @@ uint32_t bdbm_page_ftl_map_lpa_to_ppa (
 		me->phyaddr.page_no = phyaddr->page_no;
 		me->sp_off = k;
 
-		//tjkim
-		ID = logaddr->streamID;
 
+		//tjkim
 		if(logaddr->ofs == 0) { // count if it's user request (ofs==0), skip for gc req (ofs==wtime).
+			if(me->writtentime != -1) {
+				int64_t lifetime;
+				bdbm_bug_on(me->writtentime < 0 || me->writtentime > g_logical_wtime);
+				lifetime = g_logical_wtime - me->writtentime;
+#ifdef GET_AVG_LIFETIME
+				lifetimesum_sID[me->sID] += lifetime;
+				discarded_ID_cnt[me->sID]++;
+#endif
+				work->lifetime = lifetime;
+				work->ID = me->sID;
+				work->type = me->type;
+				queue_work(wq, &(work->my_work));
+			}
+
+			ID = logaddr->streamID;
 			//if(ID != 0) ID -= 10;
 			bdbm_bug_on(ID < 0 || ID > BDBM_STREAM_NUM);
 			me->sID = ID;
+			me->type = logaddr->type;
 			me->writtentime = g_logical_wtime++;
 			//me->writtentime = ktime_to_us(ktime_get());
 
@@ -634,9 +673,11 @@ uint32_t bdbm_page_ftl_invalidate_lpa (
 #endif
 				work->lifetime = lifetime;
 				work->ID = me->sID;
+				work->type = me->type;
 				queue_work(wq, &(work->my_work));
 
 				me->sID = -1;
+				me->type = -1;
 				me->writtentime = -1;
 			}
 		}
